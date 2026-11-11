@@ -1,0 +1,11 @@
+{
+  "name": "keji",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "typecheck": "pnpm --filter web typecheck",
+    "start": "go run ."
+  }
+}
