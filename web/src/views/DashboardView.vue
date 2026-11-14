@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import {
   CalendarRange,
-  Check,
   ChevronDown,
   ChevronRight,
   Trash2,
@@ -42,7 +41,6 @@ const swipeOffsets = reactive<Record<string, number>>({});
 const openSwipeId = ref("");
 const swipingLessonId = ref("");
 const deletingLessonId = ref("");
-const updatingLessonId = ref("");
 const SWIPE_ACTION_WIDTH = 88;
 let swipeStart: {
   id: string;
@@ -80,11 +78,6 @@ const grouped = computed(() => {
 
 const totalUnits = computed(() =>
   visibleLessons.value.reduce((sum, lesson) => sum + unitsOf(lesson.durationMinutes), 0),
-);
-const attendedUnits = computed(() =>
-  visibleLessons.value
-    .filter((lesson) => lesson.status === "attended")
-    .reduce((sum, lesson) => sum + unitsOf(lesson.durationMinutes), 0),
 );
 
 const periodLabel = computed(() => {
@@ -226,27 +219,6 @@ async function saved(lesson?: Lesson) {
   }
 }
 
-async function setStatus(lesson: Lesson, status: string) {
-  if (updatingLessonId.value) return;
-  const nextStatus = status === "attended" ? "attended" : "scheduled";
-  updatingLessonId.value = lesson.id;
-  try {
-    const updated = await api.updateLesson(lesson.id, {
-      studentId: lesson.studentId,
-      date: lesson.date,
-      startTime: lesson.startTime,
-      durationMinutes: lesson.durationMinutes,
-      status: nextStatus,
-    });
-    const index = lessons.value.findIndex((item) => item.id === lesson.id);
-    if (index >= 0) lessons.value[index] = updated;
-  } catch (caught) {
-    ui.notify(caught instanceof Error ? caught.message : "更新失败", "error");
-  } finally {
-    updatingLessonId.value = "";
-  }
-}
-
 function applyPeriod(value: {
   mode: PeriodMode;
   month: string;
@@ -311,7 +283,6 @@ onBeforeUnmount(() => {
       </button>
       <div class="course-totals">
         <span>总课时 <strong>{{ formatNumber(totalUnits) }}</strong></span>
-        <span>已上 <strong>{{ formatNumber(attendedUnits) }}</strong></span>
       </div>
     </section>
 
@@ -356,21 +327,6 @@ onBeforeUnmount(() => {
                 <strong>{{ lesson.studentName }}</strong>
                 <small>{{ durationUnitLabel(lesson.durationMinutes) }}</small>
               </div>
-              <button
-                type="button"
-                class="attendance-toggle"
-                :class="{ attended: lesson.status === 'attended' }"
-                role="checkbox"
-                :aria-checked="lesson.status === 'attended'"
-                :aria-label="`${lesson.studentName}：${lesson.status === 'attended' ? '已上，点击切换为未上' : '未上，点击切换为已上'}`"
-                :disabled="updatingLessonId === lesson.id"
-                @click.stop="setStatus(lesson, lesson.status === 'attended' ? 'scheduled' : 'attended')"
-              >
-                <span class="attendance-state-icon" aria-hidden="true">
-                  <Check v-if="lesson.status === 'attended'" :size="13" :stroke-width="3" />
-                </span>
-                <span>{{ lesson.status === "attended" ? "已上" : "未上" }}</span>
-              </button>
               <ChevronRight :size="16" class="row-chevron" aria-hidden="true" />
             </article>
           </div>

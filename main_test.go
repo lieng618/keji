@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,22 +22,32 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLessonDateUpperBound(t *testing.T) {
+func TestLessonIsCompleted(t *testing.T) {
 	location := time.FixedZone("Asia/Shanghai", 8*60*60)
 	now := time.Date(2026, time.November, 11, 12, 0, 0, 0, location)
 	tests := []struct {
-		date string
-		want bool
+		date     string
+		start    string
+		duration int
+		want     bool
 	}{
-		{"2026-11-10", true},
-		{"2026-11-11", true},
-		{"2026-12-11", true},
-		{"2026-12-12", false},
-		{"2027-01-01", false},
+		{"2026-11-10", "18:00", 60, true},
+		{"2026-11-11", "10:59", 60, true},
+		{"2026-11-11", "11:00", 60, true},
+		{"2026-11-11", "11:01", 60, false},
+		{"2026-11-11", "18:00", 60, false},
+		{"2026-11-12", "10:00", 60, false},
 	}
 	for _, test := range tests {
-		if got := lessonDateWithinOneMonth(test.date, now); got != test.want {
-			t.Errorf("lessonDateWithinOneMonth(%q) = %v, want %v", test.date, got, test.want)
+		if got := lessonIsCompleted(test.date, test.start, test.duration, now); got != test.want {
+			t.Errorf(
+				"lessonIsCompleted(%q, %q, %d) = %v, want %v",
+				test.date,
+				test.start,
+				test.duration,
+				got,
+				test.want,
+			)
 		}
 	}
 }
@@ -54,7 +65,7 @@ func TestFreshDatabaseSchema(t *testing.T) {
 		"students": {"id", "user_id", "name", "created_at", "updated_at", "deleted_at"},
 		"lessons": {
 			"id", "user_id", "student_id", "lesson_date", "start_time",
-			"duration_minutes", "status", "created_at", "updated_at", "deleted_at",
+			"duration_minutes", "created_at", "updated_at", "deleted_at",
 		},
 	}
 	for table, wanted := range expected {
@@ -75,6 +86,62 @@ func TestFreshDatabaseSchema(t *testing.T) {
 	}
 	if attachmentTableCount != 0 {
 		t.Fatal("unused attachments table still exists")
+	}
+}
+
+func TestLegacyLessonStatusColumnIsRemoved(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "student-manager.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE lessons (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		student_id TEXT NOT NULL,
+		lesson_date TEXT NOT NULL,
+		start_time TEXT NOT NULL,
+		duration_minutes INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'scheduled',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		deleted_at TEXT
+	)`); err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO lessons
+		(id, user_id, student_id, lesson_date, start_time, duration_minutes, status, created_at, updated_at)
+		VALUES ('les_legacy', 'usr_legacy', 'stu_legacy', '2026-11-10', '18:00', 60, 'scheduled', '', '')`); err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	columns, err := tableColumns(store, "lessons")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range columns {
+		if column == "status" {
+			t.Fatal("legacy status column was not removed")
+		}
+	}
+
+	var lessonID string
+	if err := store.db.QueryRow(`SELECT id FROM lessons`).Scan(&lessonID); err != nil {
+		t.Fatal(err)
+	}
+	if lessonID != "les_legacy" {
+		t.Fatalf("legacy lesson id = %q, want les_legacy", lessonID)
 	}
 }
 
@@ -107,7 +174,6 @@ func TestDeleteStudentHidesAndRestoresLessons(t *testing.T) {
 		Date:            "2026-11-11",
 		StartTime:       "18:00",
 		DurationMinutes: 60,
-		Status:          "attended",
 	}); err != nil {
 		t.Fatal(err)
 	}

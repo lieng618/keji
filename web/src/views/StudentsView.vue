@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ChevronRight, MoreHorizontal, Search, Trash2, X } from "lucide-vue-next";
+import {
+  ChevronRight,
+  MoreHorizontal,
+  Search,
+  Trash2,
+  X,
+} from "lucide-vue-next";
 import { api } from "../api";
 import LessonModal from "../components/LessonModal.vue";
 import StudentDetailModal from "../components/StudentDetailModal.vue";
@@ -48,14 +54,14 @@ const filtered = computed(() => {
     (student) => student.name.includes(term),
   );
 });
+const monthUnits = computed(() =>
+  lessons.value.reduce((sum, lesson) => sum + unitsOf(lesson.durationMinutes), 0),
+);
 
 function metrics(studentId: string) {
   const items = lessons.value.filter((lesson) => lesson.studentId === studentId);
   return {
     totalUnits: items.reduce((sum, lesson) => sum + unitsOf(lesson.durationMinutes), 0),
-    attendedUnits: items
-      .filter((lesson) => lesson.status === "attended")
-      .reduce((sum, lesson) => sum + unitsOf(lesson.durationMinutes), 0),
   };
 }
 
@@ -120,11 +126,6 @@ function editLessonFromDetail(lesson: Lesson) {
   detailStudent.value = null;
   editingLesson.value = lesson;
   lessonModalOpen.value = true;
-}
-
-function lessonStatusChanged(lesson: Lesson) {
-  const index = lessons.value.findIndex((item) => item.id === lesson.id);
-  if (index >= 0) lessons.value[index] = lesson;
 }
 
 function startSwipe(student: Student, event: PointerEvent) {
@@ -251,6 +252,19 @@ onBeforeUnmount(() => {
           <X :size="16" aria-hidden="true" />
         </button>
       </div>
+      <div class="student-toolbar-summary">
+        <span class="student-lesson-total" aria-live="polite">
+          <span class="student-lesson-period">本月</span>
+          <strong>{{ formatNumber(monthUnits) }}</strong>
+          <span>课时</span>
+        </span>
+        <span class="student-count" aria-live="polite">
+          <span class="student-count-label">共</span>
+          <strong>{{ students.length }}</strong>
+          <span class="student-count-unit-desktop">名学生</span>
+          <span class="student-count-unit-mobile">人</span>
+        </span>
+      </div>
       <button
         class="button button-primary student-add-action"
         @click="openAdd"
@@ -299,10 +313,6 @@ onBeforeUnmount(() => {
             <strong>{{ formatNumber(metrics(student.id).totalUnits) }}</strong>
             <small>本月课时</small>
           </span>
-          <span class="student-row-metric">
-            <strong>{{ formatNumber(metrics(student.id).attendedUnits) }}</strong>
-            <small>已上</small>
-          </span>
           <button
             class="icon-button subtle"
             :aria-label="`编辑 ${student.name}`"
@@ -332,7 +342,6 @@ onBeforeUnmount(() => {
       @close="closeDetail"
       @edit="openEdit"
       @edit-lesson="editLessonFromDetail"
-      @status-changed="lessonStatusChanged"
     />
     <LessonModal
       :open="lessonModalOpen"

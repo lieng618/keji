@@ -15,7 +15,6 @@ export interface Lesson {
   date: string;
   startTime: string;
   durationMinutes: number;
-  status: "scheduled" | "attended";
 }
 
 export interface LessonPayload {
@@ -23,7 +22,6 @@ export interface LessonPayload {
   date: string;
   startTime: string;
   durationMinutes: number;
-  status: "scheduled" | "attended";
 }
 
 export interface WheelOption {

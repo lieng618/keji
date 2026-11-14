@@ -34,7 +34,6 @@ type Lesson struct {
 	Date            string `json:"date"`
 	StartTime       string `json:"startTime"`
 	DurationMinutes int    `json:"durationMinutes"`
-	Status          string `json:"status"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt"`
 }
@@ -100,14 +99,12 @@ func (s *Store) migrate() error {
 			lesson_date TEXT NOT NULL,
 			start_time TEXT NOT NULL,
 			duration_minutes INTEGER NOT NULL,
-			status TEXT NOT NULL DEFAULT 'scheduled',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_lessons_user_date ON lessons(user_id, lesson_date);`,
 		`CREATE INDEX IF NOT EXISTS idx_lessons_student ON lessons(student_id, lesson_date);`,
-		`UPDATE lessons SET status = 'attended' WHERE status = 'completed';`,
 	}
 
 	for _, statement := range statements {
@@ -115,8 +112,26 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("数据库初始化失败: %w", err)
 		}
 	}
+	if err := s.dropLessonStatusColumn(ctx); err != nil {
+		return fmt.Errorf("数据库初始化失败: %w", err)
+	}
 
 	return nil
+}
+
+func (s *Store) dropLessonStatusColumn(ctx context.Context) error {
+	var count int
+	if err := s.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('lessons') WHERE name = 'status'`,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `ALTER TABLE lessons DROP COLUMN status`)
+	return err
 }
 
 func (s *Store) userCount(ctx context.Context) (int, error) {
@@ -265,19 +280,19 @@ func (s *Store) createLesson(ctx context.Context, userID string, lesson Lesson) 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lessons
-		 (id, user_id, student_id, lesson_date, start_time, duration_minutes, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (id, user_id, student_id, lesson_date, start_time, duration_minutes, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		lesson.ID, userID, lesson.StudentID, lesson.Date, lesson.StartTime, lesson.DurationMinutes,
-		lesson.Status, now, now,
+		now, now,
 	)
 	return err
 }
 
 func (s *Store) updateLesson(ctx context.Context, userID, lessonID string, lesson Lesson) (bool, error) {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE lessons SET student_id = ?, lesson_date = ?, start_time = ?, duration_minutes = ?, status = ?, updated_at = ?
+		`UPDATE lessons SET student_id = ?, lesson_date = ?, start_time = ?, duration_minutes = ?, updated_at = ?
 		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-		lesson.StudentID, lesson.Date, lesson.StartTime, lesson.DurationMinutes, lesson.Status,
+		lesson.StudentID, lesson.Date, lesson.StartTime, lesson.DurationMinutes,
 		time.Now().UTC().Format(time.RFC3339), lessonID, userID,
 	)
 	if err != nil {
@@ -301,7 +316,7 @@ func (s *Store) deleteLesson(ctx context.Context, userID, lessonID string) (bool
 
 func (s *Store) listLessons(ctx context.Context, userID, month, studentID string) ([]Lesson, error) {
 	query := `SELECT l.id, l.student_id, s.name, l.lesson_date, l.start_time,
-		l.duration_minutes, l.status, l.created_at, l.updated_at
+		l.duration_minutes, l.created_at, l.updated_at
 		FROM lessons l JOIN students s ON s.id = l.student_id
 		WHERE l.user_id = ? AND l.deleted_at IS NULL AND s.deleted_at IS NULL`
 	args := []any{userID}
@@ -326,7 +341,7 @@ func (s *Store) listLessons(ctx context.Context, userID, month, studentID string
 		var lesson Lesson
 		if err := rows.Scan(
 			&lesson.ID, &lesson.StudentID, &lesson.StudentName,
-			&lesson.Date, &lesson.StartTime, &lesson.DurationMinutes, &lesson.Status,
+			&lesson.Date, &lesson.StartTime, &lesson.DurationMinutes,
 			&lesson.CreatedAt, &lesson.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -340,13 +355,13 @@ func (s *Store) getLesson(ctx context.Context, userID, lessonID string) (Lesson,
 	var lesson Lesson
 	err := s.db.QueryRowContext(ctx,
 		`SELECT l.id, l.student_id, s.name, l.lesson_date, l.start_time,
-			l.duration_minutes, l.status, l.created_at, l.updated_at
+			l.duration_minutes, l.created_at, l.updated_at
 		 FROM lessons l JOIN students s ON s.id = l.student_id
 		 WHERE l.id = ? AND l.user_id = ? AND l.deleted_at IS NULL AND s.deleted_at IS NULL`,
 		lessonID, userID,
 	).Scan(
 		&lesson.ID, &lesson.StudentID, &lesson.StudentName,
-		&lesson.Date, &lesson.StartTime, &lesson.DurationMinutes, &lesson.Status,
+		&lesson.Date, &lesson.StartTime, &lesson.DurationMinutes,
 		&lesson.CreatedAt, &lesson.UpdatedAt,
 	)
 	return lesson, err

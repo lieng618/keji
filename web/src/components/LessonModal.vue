@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { Check } from "lucide-vue-next";
 import { api } from "../api";
 import { useUiStore } from "../stores/ui";
 import type { Lesson, LessonPayload, Student, WheelOption } from "../types";
 import {
   TIME_OPTIONS,
   endTime,
-  oneMonthFromToday,
   todayKey,
   timeRangeMinutes,
 } from "../utils";
 import BaseModal from "./BaseModal.vue";
+import StudentPicker from "./StudentPicker.vue";
 import WheelDatePicker from "./WheelDatePicker.vue";
 import WheelSelect from "./WheelSelect.vue";
 
@@ -29,12 +28,11 @@ const form = reactive<LessonPayload>({
   date: todayKey(),
   startTime: "18:00",
   durationMinutes: 60,
-  status: "scheduled",
 });
 const endTimeValue = ref("19:00");
 const saving = ref(false);
 const fieldErrors = reactive<Record<string, string>>({});
-const maxLessonDate = ref(oneMonthFromToday());
+const maxLessonDate = ref(todayKey());
 
 const isEdit = computed(() => Boolean(props.lesson?.id));
 const startOptions = computed<WheelOption[]>(() =>
@@ -43,18 +41,11 @@ const startOptions = computed<WheelOption[]>(() =>
 const endOptions = computed<WheelOption[]>(() =>
   TIME_OPTIONS.slice(1).map((time) => ({ value: time, label: time })),
 );
-const studentOptions = computed<WheelOption[]>(() =>
-  props.students.map((student) => ({
-    value: student.id,
-    label: student.name,
-  })),
-);
-
 watch(
   () => [props.open, props.lesson, props.presetStudentId, props.students] as const,
   () => {
     if (!props.open) return;
-    maxLessonDate.value = oneMonthFromToday();
+    maxLessonDate.value = todayKey();
     Object.keys(fieldErrors).forEach((key) => delete fieldErrors[key]);
 
     if (props.lesson) {
@@ -63,24 +54,37 @@ watch(
       form.startTime = props.lesson.startTime;
       endTimeValue.value = endTime(props.lesson.startTime, props.lesson.durationMinutes);
       form.durationMinutes = props.lesson.durationMinutes;
-      form.status = props.lesson.status;
     } else {
       const now = new Date();
-      const startMinutes = Math.min(
-        23 * 60,
-        Math.ceil((now.getHours() * 60 + now.getMinutes()) / 30) * 30,
-      );
+      const latestEndMinutes = Math.floor(
+        (now.getHours() * 60 + now.getMinutes()) / 30,
+      ) * 30;
       const preferredStudent = props.students.some(
         (student) => student.id === props.presetStudentId,
       )
         ? props.presetStudentId
         : props.students[0]?.id;
       form.studentId = preferredStudent ?? "";
-      form.date = todayKey();
-      form.startTime = minutesToTime(startMinutes);
-      endTimeValue.value = minutesToTime(Math.min(startMinutes + 60, 23 * 60 + 30));
-      form.durationMinutes = 60;
-      form.status = "scheduled";
+      if (latestEndMinutes >= 60) {
+        form.date = todayKey();
+        form.startTime = minutesToTime(latestEndMinutes - 60);
+        endTimeValue.value = minutesToTime(latestEndMinutes);
+        form.durationMinutes = 60;
+      } else if (latestEndMinutes >= 30) {
+        form.date = todayKey();
+        form.startTime = "00:00";
+        endTimeValue.value = "00:30";
+        form.durationMinutes = 30;
+      } else {
+        const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        form.date = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(
+          2,
+          "0",
+        )}-${String(yesterday.getDate()).padStart(2, "0")}`;
+        form.startTime = "22:30";
+        endTimeValue.value = "23:30";
+        form.durationMinutes = 60;
+      }
     }
   },
   { immediate: true },
@@ -109,6 +113,11 @@ function validate() {
   return Object.keys(fieldErrors).length === 0;
 }
 
+function selectStudent(studentId: string) {
+  form.studentId = studentId;
+  delete fieldErrors.studentId;
+}
+
 async function save() {
   if (!validate()) {
     ui.notify(Object.values(fieldErrors)[0] ?? "请检查课程信息", "error");
@@ -121,7 +130,6 @@ async function save() {
       date: form.date,
       startTime: form.startTime,
       durationMinutes: timeRangeMinutes(form.startTime, endTimeValue.value),
-      status: form.status,
     };
     const savedLesson = props.lesson
       ? await api.updateLesson(props.lesson.id, payload)
@@ -158,13 +166,11 @@ function minutesToTime(value: number) {
     <form class="lesson-form" novalidate @submit.prevent="save">
       <div class="form-field" :class="{ 'has-error': fieldErrors.studentId }">
         <span>学生 <i>*</i></span>
-        <WheelSelect
+        <StudentPicker
           :model-value="form.studentId"
-          :options="studentOptions"
+          :students="students"
           :invalid="Boolean(fieldErrors.studentId)"
-          :visible-items="3"
-          label="选择学生"
-          @update:model-value="form.studentId = String($event)"
+          @update:model-value="selectStudent"
         />
       </div>
 
@@ -201,24 +207,6 @@ function minutesToTime(value: number) {
             @update:model-value="endTimeValue = String($event)"
           />
         </div>
-      </div>
-
-      <div class="form-field status-field" role="group" aria-labelledby="lesson-status-label">
-        <span id="lesson-status-label">状态</span>
-        <button
-          type="button"
-          class="attendance-toggle"
-          :class="{ attended: form.status === 'attended' }"
-          role="checkbox"
-          :aria-checked="form.status === 'attended'"
-          :aria-label="form.status === 'attended' ? '已上，点击切换为未上' : '未上，点击切换为已上'"
-          @click="form.status = form.status === 'attended' ? 'scheduled' : 'attended'"
-        >
-          <span class="attendance-state-icon" aria-hidden="true">
-            <Check v-if="form.status === 'attended'" :size="13" :stroke-width="3" />
-          </span>
-          <span>{{ form.status === "attended" ? "已上" : "未上" }}</span>
-        </button>
       </div>
 
       <div class="modal-actions modal-actions-right">

@@ -306,7 +306,6 @@ type lessonRequest struct {
 	Date            string `json:"date"`
 	StartTime       string `json:"startTime"`
 	DurationMinutes int    `json:"durationMinutes"`
-	Status          string `json:"status"`
 }
 
 func (a *App) handleCreateLesson(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +330,6 @@ func (a *App) handleCreateLesson(w http.ResponseWriter, r *http.Request) {
 		Date:            request.Date,
 		StartTime:       request.StartTime,
 		DurationMinutes: request.DurationMinutes,
-		Status:          normalizeLessonStatus(request.Status),
 	}
 	if err := a.store.createLesson(r.Context(), user.ID, lesson); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存课程失败")
@@ -366,7 +364,6 @@ func (a *App) handleUpdateLesson(w http.ResponseWriter, r *http.Request) {
 		Date:            request.Date,
 		StartTime:       request.StartTime,
 		DurationMinutes: request.DurationMinutes,
-		Status:          normalizeLessonStatus(request.Status),
 	}
 	ok, err := a.store.updateLesson(r.Context(), user.ID, r.PathValue("id"), lesson)
 	if err != nil {
@@ -409,9 +406,6 @@ func normalizeLessonRequest(request *lessonRequest) string {
 	if _, err := time.Parse("2006-01-02", request.Date); err != nil {
 		return "上课日期格式不正确"
 	}
-	if !lessonDateWithinOneMonth(request.Date, shanghaiNow()) {
-		return "上课日期最多只能选择未来一个月"
-	}
 	if !timePattern.MatchString(request.StartTime) {
 		return "请选择有效的开始时间"
 	}
@@ -421,27 +415,28 @@ func normalizeLessonRequest(request *lessonRequest) string {
 	if request.DurationMinutes < 15 || request.DurationMinutes > 240 || request.DurationMinutes%15 != 0 {
 		return "课程时长需要是 15 到 240 分钟之间、按 15 分钟递增"
 	}
-	if request.Status == "" {
-		request.Status = "scheduled"
-	}
-	if request.Status != "scheduled" && request.Status != "attended" {
-		return "上课状态不正确"
+	if !lessonIsCompleted(request.Date, request.StartTime, request.DurationMinutes, shanghaiNow()) {
+		return "只能记录已经上完的课程"
 	}
 	return ""
 }
 
-func lessonDateWithinOneMonth(date string, now time.Time) bool {
-	maxDate := now.AddDate(0, 1, 0).Format("2006-01-02")
-	return date <= maxDate
-}
-
-func normalizeLessonStatus(status string) string {
-	switch status {
-	case "attended":
-		return status
-	default:
-		return "scheduled"
+func lessonIsCompleted(date, startTime string, durationMinutes int, now time.Time) bool {
+	if date < now.Format("2006-01-02") {
+		return true
 	}
+	if date > now.Format("2006-01-02") {
+		return false
+	}
+	startedAt, err := time.ParseInLocation(
+		"2006-01-02 15:04",
+		date+" "+startTime,
+		now.Location(),
+	)
+	if err != nil {
+		return false
+	}
+	return !startedAt.Add(time.Duration(durationMinutes) * time.Minute).After(now)
 }
 
 func normalizeMonth(value string) (string, string) {
